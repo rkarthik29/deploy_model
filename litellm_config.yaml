@@ -1,0 +1,29 @@
+model_list:
+  # Stage 1 — Test model (ChatGLM3-6B)
+  - model_name: chatglm3-6b
+    litellm_params:
+      model: openai/chatglm3-6b
+      api_base: http://vllm-glm3-6b:8000/v1
+      api_key: "none"
+
+  # Stage 2 — Mid-tier (GLM-4-9B-Chat)
+  #- model_name: glm-4-9b-chat
+  #  litellm_params:
+  #    model: openai/glm-4-9b-chat
+  #    api_base: http://vllm-glm4-9b:8000/v1
+  #    api_key: "none"
+
+  # Stage 3 — Production FP8 (uncomment when ready)
+  # - model_name: glm-4
+  #   litellm_params:
+  #     model: openai/glm-4
+  #     api_base: http://vllm-glm4-fp8:8000/v1
+  #     api_key: "none"
+
+litellm_settings:
+  drop_params: true       # strips empty/unsupported params
+  request_timeout: 600    # 10 min timeout for long generations
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
