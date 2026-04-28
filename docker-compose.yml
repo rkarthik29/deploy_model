@@ -1,0 +1,194 @@
+# GLM Inference Stack — RHEL AI / NVIDIA L40S 48GB
+# Models stored at /mnt/data/models on the host (2.9TB volume)
+#
+# Folder structure:
+#   /mnt/data/models/
+#     chatglm3-6b/       <- test model  (~12 GB VRAM FP16)
+#     glm-4-9b-chat/     <- mid-tier    (~18 GB VRAM FP16)
+#     glm-4-0520/        <- production  (~40 GB VRAM FP8)
+#
+# L40S VRAM = 48 GB
+#   Run 6B + 9B simultaneously, OR one FP8 model at a time
+
+networks:
+  llm-network:
+    driver: bridge
+
+volumes:
+  open-webui-data:
+
+services:
+
+  # ──────────────────────────────────────────────────────────────
+  # 1a. vLLM — ChatGLM3-6B  (~12 GB VRAM) — testing
+  # ──────────────────────────────────────────────────────────────
+  vllm-glm3-6b:
+    image: vllm/vllm-openai:latest
+    env_file:
+      - /mnt/data/scripts/.env
+    container_name: vllm-glm3-6b
+    restart: unless-stopped
+    networks: [llm-network]
+    ports:
+      - "8001:8000"
+    volumes:
+      - /mnt/data/models:/models:ro
+    environment:
+      NCCL_P2P_DISABLE: "1"
+      NCCL_IB_DISABLE: "1"
+    command: >
+      --model /models/chatglm3-6b
+      --served-model-name chatglm3-6b
+      --trust-remote-code
+      --dtype float16
+      --gpu-memory-utilization 0.90
+      --max-model-len 8192
+      --max-num-seqs 16
+      --host 0.0.0.0
+      --port 8000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: "4gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 8
+      start_period: 120s
+
+  # ──────────────────────────────────────────────────────────────
+  # 1b. vLLM — GLM-4-9B-Chat  (~18 GB VRAM)
+  # ──────────────────────────────────────────────────────────────
+  #  vllm-glm4-9b:
+  #  image: vllm/vllm-openai:latest
+  #  container_name: vllm-glm4-9b
+  #  restart: unless-stopped
+  #  networks: [llm-network]
+  #  ports:
+  #    - "8002:8000"
+  #  volumes:
+  #    - /mnt/data/models:/models:ro
+  #  environment:
+  #    NCCL_P2P_DISABLE: "1"
+  #    NCCL_IB_DISABLE: "1"
+  #  command: >
+  #    --model /models/glm-4-9b-chat
+  #     --served-model-name glm-4-9b-chat
+  #    --trust-remote-code
+  #    --dtype float16
+  #    --gpu-memory-utilization 0.55
+  #    --max-model-len 8192
+  #    --max-num-seqs 16
+  #    --host 0.0.0.0
+  #    --port 8000
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: "4gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 8
+      start_period: 120s
+
+  # ──────────────────────────────────────────────────────────────
+  # 1c. vLLM — GLM-4 FP8  (~40 GB VRAM) — production
+  #     Uncomment when ready; comment out 1a and 1b above
+  # ──────────────────────────────────────────────────────────────
+  # vllm-glm4-fp8:
+  #   image: vllm/vllm-openai:latest
+  #   container_name: vllm-glm4-fp8
+  #   restart: unless-stopped
+  #   networks: [llm-network]
+  #   ports:
+  #     - "8003:8000"
+  #   volumes:
+  #     - /mnt/data/models:/models:ro
+  #   environment:
+  #     NCCL_P2P_DISABLE: "1"
+  #     NCCL_IB_DISABLE: "1"
+  #   command: >
+  #     --model /models/glm-4-0520
+  #     --served-model-name glm-4
+  #     --trust-remote-code
+  #     --dtype fp8
+  #     --quantization fp8
+  #     --gpu-memory-utilization 0.88
+  #     --max-model-len 32768
+  #     --max-num-seqs 8
+  #     --host 0.0.0.0
+  #     --port 8000
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   shm_size: "8gb"
+
+  # ──────────────────────────────────────────────────────────────
+  # 2. LiteLLM — OpenAI-compatible API gateway
+  # ──────────────────────────────────────────────────────────────
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm
+    restart: unless-stopped
+    networks: [llm-network]
+    env_file:
+      - /mnt/data/scripts/.env
+    ports:
+      - "4000:4000"
+    volumes:
+      - /mnt/data/scripts/litellm_config.yaml:/app/config.yaml:ro,z
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "4"]
+    depends_on:
+      vllm-glm3-6b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ──────────────────────────────────────────────────────────────
+  # 3. Open WebUI — Chat frontend
+  # ──────────────────────────────────────────────────────────────
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    networks: [llm-network]
+    env_file:
+      - /mnt/data/scripts/.env
+    ports:
+      - "3000:8080"
+    volumes:
+      - open-webui-data:/app/backend/data
+    environment:
+      OPENAI_API_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LITELLM_MASTER_KEY}
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      WEBUI_AUTH: "true"
+    depends_on:
+      litellm:
+        condition: service_healthy
