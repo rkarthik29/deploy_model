@@ -11,7 +11,7 @@
 /mnt/data/
 ├── miniconda/              ← Miniconda install
 ├── conda-envs/
-│   └── llm/               ← Conda environment
+│   └── llm/               ← Conda environment (includes podman-compose)
 ├── models/
 │   └── glm-5.1-fp8/       ← GLM 5.1 FP8 weights (~756GB)
 ├── images/                ← Saved container images (.tar)
@@ -80,16 +80,20 @@ conda config --remove channels defaults
 
 ### 3. Create Conda Environment (Once — Stored on Volume)
 
+All tools including `podman-compose` are installed in the conda env.
+Activating the env makes everything available — no system-wide copies needed.
+
 ```bash
 conda create --prefix /mnt/data/conda-envs/llm python=3.11 -c conda-forge --override-channels
 conda activate /mnt/data/conda-envs/llm
 
-# Install packages
+# Install all tools inside the env
 pip install podman-compose
 pip install "huggingface_hub[cli]"
 
-# Make podman-compose available system-wide
-sudo cp /mnt/data/conda-envs/llm/bin/podman-compose /usr/local/bin/podman-compose
+# Verify
+podman-compose --version
+huggingface-cli --version
 
 # Auto-activate on login
 echo 'conda activate /mnt/data/conda-envs/llm' >> ~/.bashrc
@@ -169,7 +173,7 @@ mount /dev/vdd /mnt/data
 echo '/dev/vdd /mnt/data ext4 defaults 0 0' | sudo tee -a /etc/fstab
 ```
 
-### 2. Restore PATH and Conda
+### 2. Restore PATH and Activate Conda
 
 ```bash
 echo 'export PATH=/mnt/data/miniconda/bin:$PATH' >> ~/.bashrc
@@ -177,19 +181,15 @@ echo 'conda activate /mnt/data/conda-envs/llm' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### 3. Restore podman-compose
+Once activated, `podman-compose` and `huggingface-cli` are immediately available. ✅
 
-```bash
-sudo cp /mnt/data/conda-envs/llm/bin/podman-compose /usr/local/bin/podman-compose
-```
-
-### 4. Regenerate NVIDIA CDI (Required on Each New VSI)
+### 3. Regenerate NVIDIA CDI (Required on Each New VSI)
 
 ```bash
 sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 ```
 
-### 5. Load Container Images from Volume
+### 4. Load Container Images from Volume
 
 ```bash
 sudo podman load -i /mnt/data/images/vllm-openai.tar
@@ -200,7 +200,7 @@ sudo podman load -i /mnt/data/images/open-webui.tar
 sudo podman images
 ```
 
-### 6. Start the Stack
+### 5. Start the Stack
 
 ```bash
 cd /mnt/data/scripts
